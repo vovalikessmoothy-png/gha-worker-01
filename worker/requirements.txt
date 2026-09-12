@@ -1,0 +1,8 @@
+# Базовый рантайм. Раскомментируй нужное под профиль pre-deploy.
+# embed / rerank / classify:
+fastembed==0.3.6
+onnxruntime==1.19.2
+# llm-nano / llm-small / llm-mid:
+# llama-cpp-python==0.3.2
+# asr:
+# openai-whisper==20240930   # или сборка whisper.cpp в шаге workflow

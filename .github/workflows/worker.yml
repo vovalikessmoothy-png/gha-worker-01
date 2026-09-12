@@ -1,0 +1,66 @@
+# Warm-pool воркер: долгоживущий job, тянет задачи из очереди Cloudflare Worker.
+# Один запуск = до ~20 параллельных воркеров (matrix) в одном репо.
+# Запускается по workflow_dispatch или по расписанию (перезапуск до 6ч лимита).
+name: worker
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: "Профиль модели (embed|rerank|llm-nano|llm-small|asr)"
+        required: true
+        default: "embed"
+      lifetime_min:
+        description: "Сколько минут жить воркеру (до 350, запас до 6ч)"
+        required: false
+        default: "340"
+      batch:
+        description: "Сколько задач брать в одну VM за раз (1=по одной, для долгих LLM 4-8)"
+        required: false
+        default: "1"
+  schedule:
+    # Перезапуск пула каждые 5 часов, чтобы всегда были тёплые воркеры.
+    - cron: "0 */5 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  # Не плодим дубли пула на репо+профиль.
+  group: worker-${{ github.event.inputs.profile || 'embed' }}
+  cancel-in-progress: false
+
+jobs:
+  pool:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 9 одновременных воркеров на репо (мягкий лимит concurrency, чтобы не
+        # упираться в потолок аккаунта при нескольких активных репозиториях).
+        slot: [1,2,3,4,5,6,7,8,9]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/gha-cluster/models
+          key: models-${{ github.event.inputs.profile || 'embed' }}
+
+      - name: Install runtime
+        run: pip install -r worker/requirements.txt
+
+      - name: Run warm worker loop
+        env:
+          QUEUE_URL:  ${{ secrets.QUEUE_URL }}   # URL Cloudflare Worker
+          QUEUE_KEY:  ${{ secrets.QUEUE_KEY }}   # shared secret для авторизации
+          PROFILE:    ${{ github.event.inputs.profile || 'embed' }}
+          LIFETIME:   ${{ github.event.inputs.lifetime_min || '340' }}
+          BATCH:      ${{ github.event.inputs.batch || '1' }}
+          SLOT:       ${{ matrix.slot }}
+        run: python worker/loop.py

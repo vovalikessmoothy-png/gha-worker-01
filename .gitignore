@@ -1,0 +1,8 @@
+# Cloudflare wrangler local cache — содержит account id, не публикуем
+cloudflare/.wrangler/
+# Python bytecode
+__pycache__/
+*.pyc
+# локальные секреты (на всякий)
+.dev.vars
+*.local

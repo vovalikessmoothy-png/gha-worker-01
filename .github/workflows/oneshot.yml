@@ -1,0 +1,28 @@
+# One-shot: одна задача = один job. Триггер напрямую через repository_dispatch.
+# Холодный старт 15–45с — для батчей, не для realtime. Результат постит обратно
+# в Cloudflare Worker по callback_url.
+name: oneshot
+
+on:
+  repository_dispatch:
+    types: [infer]
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r worker/requirements.txt
+      - name: Infer once
+        env:
+          PROFILE:      ${{ github.event.client_payload.profile }}
+          TASK_JSON:    ${{ toJSON(github.event.client_payload.task) }}
+          CALLBACK_URL: ${{ github.event.client_payload.callback_url }}
+          QUEUE_KEY:    ${{ secrets.QUEUE_KEY }}
+        run: python worker/oneshot.py

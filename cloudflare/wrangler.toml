@@ -1,0 +1,34 @@
+name = "gha-cluster-api"
+main = "worker.js"
+compatibility_date = "2024-11-01"
+
+# Секрет: wrangler secret put QUEUE_KEY   (тот же bearer на очередь и сессии)
+# KV: создать и подставить id
+kv_namespaces = [
+  { binding = "QUEUE",   id = "edc6d5f00765449d9db26cdfe0244a14" },
+  { binding = "RESULTS", id = "bad0b02a966247f09ed3cc1e29fb33c2" },
+]
+
+# Durable Object: координатор одной агент-сессии (run/reply/nudge + колбэки).
+[[durable_objects.bindings]]
+name = "SESSION"
+class_name = "SessionDO"
+
+# Durable Object: одна долгая кампания (мега-батч 1000+ задач, чекпоинт+резюм).
+[[durable_objects.bindings]]
+name = "CAMPAIGN"
+class_name = "CampaignDO"
+
+# Миграции, регистрирующие классы DO (SQLite-backed).
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["SessionDO"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["CampaignDO"]
+
+# Cron: раз в минуту тикаем активные кампании (дозаполнить очередь, собрать
+# результаты, двигать курсор до конца массива).
+[triggers]
+crons = ["*/1 * * * *"]
