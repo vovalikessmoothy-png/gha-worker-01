@@ -1,0 +1,100 @@
+# run-agent для репозитория КОЛЬЦА (шаблон).
+#
+# Кладётся в `.github/workflows/run-agent.yml` каждого репозитория, между которыми
+# воркер раскидывает запуски. Отличается от основного `run-agent.yml` одной вещью:
+# код раннера берётся из `opencode-gha-runner`, а не из репозитория, где запущен.
+#
+# Почему так: кольцо — это места запуска, а не форки раннера. Один источник кода значит,
+# что исправление в раннере доезжает до всех репозиториев кольца сразу, без
+# перепровижина, и репозитории кольца остаются тонкими.
+#
+# Что нужно в репозитории кольца, кроме этого файла:
+#   secret   ARTIFACTS_TOKEN   — клон `repository.fullName` и пуш артефактов (contents: write)
+#   variable GATEWAY_URL       — публичный адрес шлюза
+#   variable LOG_UPLOAD        — `gcs` или `local`
+#   variable GCS_LOG_BUCKET    — бакет для логов сессии (при `gcs`)
+#   variable AGENT_ARGS        — доп. флаги агенту, например `-m ladder/free`
+#
+# В inputs — только `run_id` и одноразовый `claim_token`: `workflow_dispatch` публичного
+# репозитория показывает inputs в метаданных прогона, и ключ LLM там был бы утечкой.
+# Всё остальное джоба забирает у шлюза обменом токена.
+name: run-agent
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Идентификатор рана (эхо в ответе шлюзу)
+        required: true
+        type: string
+      claim_token:
+        description: Одноразовый токен обмена на spec + llmKey. Глохнет после первого claim'а
+        required: true
+        type: string
+
+concurrency:
+  group: run-agent-${{ inputs.run_id }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    timeout-minutes: 60
+    runs-on: ubuntu-latest
+    steps:
+      # Код раннера — из его собственного репозитория. Публичный, поэтому обычного
+      # GITHUB_TOKEN джобы достаточно; токена в шаблоне нет.
+      - name: Checkout runner
+        uses: actions/checkout@v4
+        with:
+          repository: vovalikessmoothy-png/opencode-gha-runner
+          path: .runner
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build and unit tests
+        run: cd .runner && npm ci --no-audit --no-fund && npm run build && npm test
+
+      - name: Auth to Google Cloud
+        if: env.GCS_WORKLOAD_PROVIDER != ''
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.GCS_WORKLOAD_PROVIDER }}
+          service_account: ${{ env.GCS_SERVICE_ACCOUNT }}
+
+      # Бинарь ставится до создания идентичности и делается world-readable, чтобы
+      # агент мог его исполнить под своим UID, но не мог переписать.
+      - name: Install opencode
+        run: |
+          set -euo pipefail
+          npm install -g opencode-ai --no-audit --no-fund
+          sudo chmod -R a+rX "$(npm root -g)"
+          opencode --version
+
+      - name: Run agent
+        env:
+          GATEWAY_URL: ${{ vars.GATEWAY_URL }}
+          RUN_ID: ${{ inputs.run_id }}
+          CLAIM_TOKEN: ${{ inputs.claim_token }}
+          ARTIFACTS_TOKEN: ${{ secrets.ARTIFACTS_TOKEN }}
+          LOG_UPLOAD: ${{ vars.LOG_UPLOAD || 'gcs' }}
+          GCS_LOG_BUCKET: ${{ vars.GCS_LOG_BUCKET }}
+          WORKSPACE_ROOT: ${{ runner.temp }}
+          AGENT_ARGS: ${{ vars.AGENT_ARGS }}
+          AGENT_CONFIG: ${{ vars.AGENT_CONFIG }}
+          ALLOW_SUDO: 'true'
+        run: node .runner/dist/src/runner/main.js
+
+      - name: Publish session log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: session-log-${{ inputs.run_id }}
+          path: ${{ runner.temp }}/session-logs/${{ inputs.run_id }}/session.log
+          retention-days: 3
+          if-no-files-found: ignore
