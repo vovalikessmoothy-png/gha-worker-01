@@ -1,4 +1,4 @@
-name: Zen Pool — inference worker
+name: zen-pool
 # Zen Pool — ONE long-lived GitHub Actions run that serves many inference calls.
 #
 # Why this workflow exists: a dispatched run is not an API. Nothing about a GitHub-hosted runner
