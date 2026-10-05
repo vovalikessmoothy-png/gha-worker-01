@@ -112,9 +112,15 @@ async function pull(leaseId, holdMs) {
 async function serve(task) {
   const started = Date.now();
   mark('task_claimed', { task_id: task.id, model: task.model, wait_ms: task.wait_ms });
+  // `messages` is the full OpenAI array (system + history + tools) — what the ladder sends.
+  // `prompt` is the one-line fallback for the older callers.
+  const messages = Array.isArray(task.messages) && task.messages.length
+    ? task.messages
+    : [{ role: 'user', content: task.prompt }];
   const res = await client.chat({
     model: task.model,
-    messages: [{ role: 'user', content: task.prompt }],
+    messages,
+    ...(Array.isArray(task.tools) && task.tools.length ? { tools: task.tools } : {}),
     maxTokens: task.max_tokens || 300,
   });
   const text = res.ok ? String(res.message?.content ?? '').trim() : '';
@@ -129,6 +135,9 @@ async function serve(task) {
     error: res.ok ? null : String(res.error || res.bodySnippet || '').slice(0, 500),
     provider_ms: res.ms ?? null,
     served_ms: Date.now() - started,
+    ...(res.ok && res.message?.tool_calls?.length ? { tool_calls: res.message.tool_calls } : {}),
+    ...(res.ok && res.usage ? { usage: res.usage } : {}),
+    ...(res.ok && res.finish_reason ? { finish_reason: res.finish_reason } : {}),
     runner: {
       run_id: process.env.GITHUB_RUN_ID || null,
       run_attempt: process.env.GITHUB_RUN_ATTEMPT || null,
@@ -149,6 +158,9 @@ async function serve(task) {
     task_id: task.id, ok: record.ok, text, kind: record.kind, error: record.error,
     provider_ms: record.provider_ms, served_ms: record.served_ms,
     stopped_by: record.stopped_by || null,
+    ...(record.tool_calls ? { tool_calls: record.tool_calls } : {}),
+    ...(record.usage ? { usage: record.usage } : {}),
+    ...(record.finish_reason ? { finish_reason: record.finish_reason } : {}),
   });
   mark('result_posted', { task_id: task.id, status: posted.status, rotate: posted.json?.rotate === true });
   record.rotate = posted.json?.rotate === true;
