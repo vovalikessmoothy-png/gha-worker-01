@@ -88,6 +88,29 @@ function messagesInputTokens(messages) {
 // The cap covers the WHOLE request: input + max_tokens must fit, or the server answers
 // 400 "Input token count (N) exceeds ... no tokens left for generation". A model that is not in
 // the table is passed through (`unknown`) instead of being guessed at.
+// The opencode agent ships a ~240 KB tool set; zen answers 200 with an EMPTY body to
+// anything much past a few tens of KB of tools. Slim the descriptions (the bulk of the size) —
+// the schema is what the model matches on, the prose is not needed.
+export function slimTool(t) {
+  if (!t || !t.function) return t;
+  const f = t.function;
+  const out = { ...t, function: { ...f } };
+  if (typeof out.function.description === 'string' && out.function.description.length > 240) {
+    out.function.description = out.function.description.slice(0, 240);
+  }
+  const props = out.function.parameters && out.function.parameters.properties;
+  if (props) {
+    const slimProps = {};
+    for (const [k, v] of Object.entries(props)) {
+      slimProps[k] = (typeof v?.description === 'string' && v.description.length > 240)
+        ? { ...v, description: v.description.slice(0, 240) }
+        : v;
+    }
+    out.function.parameters = { ...out.function.parameters, properties: slimProps };
+  }
+  return out;
+}
+
 export function contextCheck(model, messages, maxTokens, table = CONTEXT) {
   const cap = table[model];
   if (!cap) return { ok: true, unknown: true };
@@ -397,7 +420,10 @@ export function createZenClient({
         const name = t?.function?.name;
         if (name) merged.set(name, t);
       }
-      body.tools = [...merged.values()];
+      // The opencode agent ships a ~240 KB tool set; zen answers 200 with an EMPTY body to
+      // anything much past a few tens of KB of tools. Slim the descriptions (the bulk of the
+      // size) down — the schema is what the model matches on, the prose is not needed.
+      body.tools = [...merged.values()].map(slimTool);
       if (!tools.length) body.tool_choice = 'none';
 
       s.calls++;
