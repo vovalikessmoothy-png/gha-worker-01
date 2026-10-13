@@ -18,6 +18,8 @@
 
 import { writeFileSync } from 'node:fs';
 import { createZenClient } from './zen-client.mjs';
+import { normalizeZenResponse } from './zen-response.mjs';
+import { sanitizePoolArtifact } from './zen-artifact.mjs';
 
 const T0 = Date.now();
 const iso = () => new Date().toISOString();
@@ -60,7 +62,7 @@ const workerId = [
 
 const client = createZenClient({
   ratePerMin: 50,
-  dailyBudget: Number(process.env.ZEN_DAILY_BUDGET || 500),
+  dailyBudget: Number(process.env.ZEN_DAILY_BUDGET || 700),
   rateWaitMaxMs: 0,
   timeoutMs: Number(process.env.ZEN_TIMEOUT_MS || 90_000),
 });
@@ -122,20 +124,21 @@ async function serve(task) {
     messages,
     ...(Array.isArray(task.tools) && task.tools.length ? { tools: task.tools } : {}),
     maxTokens: task.max_tokens || 300,
+    ...(task.options?.response_format !== undefined ? { responseFormat: task.options.response_format } : {}),
+    ...(task.options?.tool_choice !== undefined ? { toolChoice: task.options.tool_choice } : {}),
   });
-  const text = res.ok ? String(res.message?.content ?? '').trim() : '';
+  const normalized = normalizeZenResponse(res, task.model);
+  const { text, ok, kind, error, tool_calls: toolCalls } = normalized;
   const record = {
-    ok: !!res.ok && text.length > 0,
+    ok,
     model: task.model,
-    prompt: task.prompt,
-    text,
-    kind: res.ok ? 'ok' : res.kind,
+    kind,
     stopped_by: res.ok ? null : (res.stopped_by || null),
     status: res.status ?? null,
-    error: res.ok ? null : String(res.error || res.bodySnippet || '').slice(0, 500),
+    error,
     provider_ms: res.ms ?? null,
     served_ms: Date.now() - started,
-    ...(res.ok && res.message?.tool_calls?.length ? { tool_calls: res.message.tool_calls } : {}),
+    ...(toolCalls ? { tool_calls: toolCalls } : {}),
     ...(res.ok && res.usage ? { usage: res.usage } : {}),
     ...(res.ok && res.finish_reason ? { finish_reason: res.finish_reason } : {}),
     runner: {
@@ -148,11 +151,11 @@ async function serve(task) {
     marks,
     served_at: iso(),
   };
-  if (args.out) writeFileSync(args.out, JSON.stringify(record, null, 2));
+  if (args.out) writeFileSync(args.out, JSON.stringify(sanitizePoolArtifact(record), null, 2));
   console.log('POOL_SERVE_RESULT ' + JSON.stringify({
     task_id: task.id, ok: record.ok, model: record.model, kind: record.kind,
     status: record.status, provider_ms: record.provider_ms, served_ms: record.served_ms,
-    chars: text.length, text: text.slice(0, 800), error: record.error,
+    chars: text.length, error_present: !!record.error,
   }));
   const posted = await call('/zen/pool/result', {
     task_id: task.id, ok: record.ok, text, kind: record.kind, error: record.error,
