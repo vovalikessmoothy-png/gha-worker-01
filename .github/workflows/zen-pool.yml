@@ -1,4 +1,4 @@
-name: Zen Pool — inference worker
+name: zen-pool
 # Zen Pool — ONE long-lived GitHub Actions run that serves many inference calls.
 #
 # Why this workflow exists: a dispatched run is not an API. Nothing about a GitHub-hosted runner
@@ -34,7 +34,6 @@ concurrency:
 
 permissions:
   contents: read
-  actions: write
 
 jobs:
   pool:
@@ -74,7 +73,7 @@ jobs:
           ZEN_RUNNER_URL: ${{ vars.ZEN_RUNNER_URL }}
           ZEN_RUNNER_TOKEN: ${{ secrets.ZEN_RUNNER_TOKEN }}
           ZEN_POOL_REPO: ${{ github.repository }}
-          ZEN_DAILY_BUDGET: ${{ vars.ZEN_DAILY_BUDGET || '500' }}
+          ZEN_DAILY_BUDGET: ${{ vars.ZEN_DAILY_BUDGET || '700' }}
         run: |
           set -uo pipefail
           # The pool dispatches idle_exit_ms (its TTL); a human dispatch sends idle_exit. Accept both.
@@ -86,21 +85,6 @@ jobs:
           RC=$?
           echo "POOL serve_done $(date -u +%FT%TZ) rc=$RC" >> pool.log
           exit $RC
-
-      # Sweep this repository's own finished runs. Runs after `serve` so a worker that is still
-      # holding calls never prunes under itself, and `if: always()` so a worker that exits on the
-      # idle TTL still leaves a clean tab behind. Live runs (this worker, a sibling) are never
-      # touched: the policy only ever deletes `completed` ones.
-      - name: sweep own finished runs
-        if: always()
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-        run: |
-          set -uo pipefail
-          echo "POOL sweep_start $(date -u +%FT%TZ)" >> pool.log
-          node scripts/zen-pool-prune.mjs --keep-hours 0.45 --max-runs 20
-          echo "POOL sweep_done $(date -u +%FT%TZ)" >> pool.log
 
       - name: boot summary
         if: always()
@@ -118,4 +102,5 @@ jobs:
           path: |
             zen-pool-last.json
             pool.log
-          retention-days: 30
+          # The worker artifact contains operational timings only; retain it briefly for debugging.
+          retention-days: 1
