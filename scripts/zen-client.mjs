@@ -53,6 +53,20 @@ export const CONTEXT = {
   'mimo-v2.5-free': 1048576,
   'nemotron-3.5-lightning-free': 1000000,
   'big-pickle': 262139,
+  // exo-free, measured 2026-10-07 by repeated probes, not by one shot (owner: «слать по 10
+  // запросов»). The server names the cap itself, so it does not have to be guessed:
+  //   400 "prompt is too long: 1848462 tokens > 1000000 maximum"   ← limit
+  //   10 × 200 000 токенов → 10/10 ответили
+  //   10 × 500 000 токенов → 10/10 ответили
+  // So the cap is 1,000,000 (server-stated floor) and big prompts are ACCEPTED.
+  //
+  // What is NOT clean: the same target returns three different prompt_tokens — {4, 466718,
+  // 840413} at 500 000 — so there are several backends behind one id, the same nondeterminism
+  // big-pickle has. The dangerous one is prompt_tokens=4 (3 of 20 probes): the model reported an
+  // answer of 137–322 tokens while seeing only ~4 prompt tokens, i.e. it did not see our input
+  // at all. And those blind calls were also the slowest (19 s and 32.6 s vs 4–7 s).
+  // Per spec §4, a nondeterministic model gets the MINIMUM observed cap, so: 1,000,000.
+  'exo-free': 1000000,
 };
 
 const randHex = n => crypto.randomBytes(n).toString('hex');
@@ -367,7 +381,7 @@ export function createZenClient({
       return { byModel };
     },
 
-    async chat({ model, messages, tools = [], maxTokens = 1500, timeoutMs: callTimeoutMs = timeoutMs } = {}) {
+    async chat({ model, messages, tools = [], maxTokens = 1500, timeoutMs: callTimeoutMs = timeoutMs, responseFormat, toolChoice } = {}) {
       if (!model) return { ok: false, kind: 'error', retryable: false, error: 'model is required — the limit is per model, so the client cannot guess one' };
       const s = slot(model);
       const t0 = clock();
@@ -425,6 +439,8 @@ export function createZenClient({
       // size) down — the schema is what the model matches on, the prose is not needed.
       body.tools = [...merged.values()].map(slimTool);
       if (!tools.length) body.tool_choice = 'none';
+      if (responseFormat !== undefined) body.response_format = responseFormat;
+      if (toolChoice !== undefined) body.tool_choice = toolChoice;
 
       s.calls++;
       const started = clock();
