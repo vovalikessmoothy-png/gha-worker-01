@@ -47,7 +47,7 @@ export const READ_TOOL = { type: 'function', function: { name: 'read', parameter
 // reliability — see spec §4 and the scenario's open points.
 // Measured free models missing here as of 2026-10-04 (run --fill-tokens before adding any):
 // deepseek-v4-flash-free, nemotron-3-ultra-free, ling-3.1-flash-free, space-bunny-free,
-// longcat-2.5-preview-free, jev-1.13-free, fledge-alpha-free, muse-spark-1.3/1.2-contributor-free.
+// beam-free, jev-1.13-free, fledge-alpha-free, muse-spark-1.3/1.2-contributor-free.
 export const CONTEXT = {
   'mimo-v2.6-flash-free': 1048576,
   'mimo-v2.5-free': 1048576,
